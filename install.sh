@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SCRIPT_VERSION="2.0.0"
+SCRIPT_VERSION="2.1.0"
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="${BASE_DIR}/logs"
 mkdir -p "$LOG_DIR"
@@ -261,6 +261,18 @@ collect_docker_panel_config() {
   PTERO_MAIL_ENCRYPTION="${PTERO_MAIL_ENCRYPTION:-tls}"
 }
 
+collect_docker_wings_config() {
+  step "Docker Wings configuration"
+  echo -e "  ${YELLOW}Wings will run as a Docker container alongside the panel stack.${NC}\n"
+
+  WINGS_STACK_DIR="$(ask_input 'Wings stack directory' "${PTERO_STACK_DIR:-/opt/pterodactyl}")"
+  WINGS_TOKEN_ID="$(ask_input 'Wings token ID (from panel node page)')"
+  WINGS_TOKEN="$(ask_input 'Wings token (from panel node page)')"
+  WINGS_PANEL_URL="$(ask_input 'Panel URL (e.g. https://panel.example.com)')"
+  WINGS_NODE_UUID="$(ask_input 'Node UUID (from panel node page)')"
+  WINGS_TIMEZONE="$(ask_input 'Server timezone' "${PTERO_TIMEZONE:-Europe/Rome}")"
+}
+
 write_docker_compose_pterodactyl() {
   local d="$PTERO_STACK_DIR"
   mkdir -p "$d/nginx/conf.d" "$d/panel/var" "$d/mariadb" "$d/redis"
@@ -356,10 +368,59 @@ NGINX
 
   state_set "docker_panel_dir" "$d"
   state_set "docker_panel_domain" "$PTERO_DOMAIN"
-  success "All files written to $d"
+  success "All panel files written to $d"
   echo
   info "Start the stack with:"
   echo "  cd $d && docker compose up -d"
+}
+
+write_docker_compose_wings() {
+  local d="$WINGS_STACK_DIR"
+  mkdir -p "$d/wings/etc" "$d/wings/tmp"
+
+  cat > "$d/wings-compose.yml" <<COMPOSE
+services:
+  wings:
+    image: ghcr.io/pterodactyl/wings:latest
+    container_name: ptero-wings
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    environment:
+      TZ: ${WINGS_TIMEZONE}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/containers:/var/lib/docker/containers
+      - ./wings/etc:/etc/pterodactyl
+      - ./wings/tmp:/tmp/pterodactyl
+      - /tmp/pterodactyl:/tmp/pterodactyl
+COMPOSE
+
+  mkdir -p "$d/wings/etc"
+  cat > "$d/wings/etc/config.yml" <<WINGSCFG
+debug: false
+uuid: ${WINGS_NODE_UUID}
+token_id: ${WINGS_TOKEN_ID}
+token: ${WINGS_TOKEN}
+api:
+  host: 0.0.0.0
+  port: 8080
+  ssl:
+    enabled: false
+  upload_limit: 100
+system:
+  data: /var/lib/pterodactyl/volumes
+  sftp:
+    bind_port: 2022
+remote: ${WINGS_PANEL_URL}
+allowed_mounts: []
+WINGSCFG
+
+  state_set "wings_docker_dir" "$d"
+  success "Wings Docker files written to $d"
+  echo
+  info "Start Wings with:"
+  echo "  cd $d && docker compose -f wings-compose.yml up -d"
 }
 
 install_pterodactyl_native() {
@@ -368,6 +429,7 @@ install_pterodactyl_native() {
   configure_firewall_panel
   run_remote_installer "$PANEL_INSTALLER_URL" "Pterodactyl"
   state_set "pterodactyl_native" "installed"
+  state_set "install_mode" "native"
   success "Native Pterodactyl installer finished."
 }
 
@@ -377,15 +439,45 @@ install_pterodactyl_docker() {
   configure_firewall_panel
   write_docker_compose_pterodactyl
   state_set "pterodactyl_docker" "installed"
+  state_set "install_mode" "docker"
 }
 
 install_wings() {
-  info "Starting Wings installer (upstream)..."
-  install_docker_engine
-  configure_firewall_wings
-  run_remote_installer "$PANEL_INSTALLER_URL" "Wings"
-  state_set "wings" "installed"
-  success "Wings installer finished."
+  local mode; mode="$(state_get install_mode)"
+
+  if [[ -z "$mode" ]]; then
+    echo
+    echo -e "  ${YELLOW}No panel has been installed via this script yet.${NC}"
+    echo -e "  Wings install mode cannot be determined automatically."
+    echo
+    local chosen
+    chosen=$(select_option "How do you want to install Wings?" \
+      "Native (upstream installer)" \
+      "Docker container")
+    case "$chosen" in
+      1) mode="native" ;;
+      2) mode="docker" ;;
+    esac
+  fi
+
+  if [[ "$mode" == "docker" ]]; then
+    info "Panel is in Docker mode — Wings will also run as a Docker container."
+    install_docker_engine
+    configure_firewall_wings
+    collect_docker_wings_config
+    write_docker_compose_wings
+    state_set "wings" "installed"
+    state_set "wings_mode" "docker"
+    success "Wings Docker setup complete."
+  else
+    info "Panel is in native mode — Wings will be installed via upstream installer."
+    install_docker_engine
+    configure_firewall_wings
+    run_remote_installer "$PANEL_INSTALLER_URL" "Wings"
+    state_set "wings" "installed"
+    state_set "wings_mode" "native"
+    success "Wings installer finished."
+  fi
 }
 
 install_reviactyl() {
@@ -393,6 +485,7 @@ install_reviactyl() {
   warn "Have your panel URL and API key ready."
   run_remote_installer "$REVIACTYL_INSTALLER_URL" "Reviactyl"
   state_set "reviactyl" "installed"
+  state_set "install_mode" "native"
   success "Reviactyl installer finished."
 }
 
@@ -404,6 +497,7 @@ install_pyrodactyl() {
   ensure_git_repo "$PYRODACTYL_REPO_URL" "$dir"
   state_set "pyrodactyl_dir" "$dir"
   state_set "pyrodactyl" "installed"
+  state_set "install_mode" "docker"
   echo
   info "Repository ready at $dir — copy .env.example to .env, fill the values and start the app."
   success "Pyrodactyl prepared."
@@ -513,8 +607,8 @@ diag_pterodactyl_docker() {
   done
 }
 
-diag_wings() {
-  echo -e "  ${BOLD}Wings${NC}"
+diag_wings_native() {
+  echo -e "  ${BOLD}Wings (native)${NC}"
   if command -v wings >/dev/null 2>&1; then
     check_ok "Wings binary found: $(wings --version 2>/dev/null || echo 'version unknown')"
   else
@@ -534,6 +628,36 @@ diag_wings() {
     check_ok "Wings service is running"
   else
     check_fail "Wings service is NOT running — fix: systemctl enable --now wings"
+  fi
+}
+
+diag_wings_docker() {
+  echo -e "  ${BOLD}Wings (Docker)${NC}"
+  local d; d="$(state_get wings_docker_dir)"
+  if [[ -z "$d" ]]; then
+    check_warn "No Wings Docker path tracked — skipping"
+    return
+  fi
+  check_ok "Wings stack directory: $d"
+  if [[ -f "$d/wings-compose.yml" ]]; then
+    check_ok "wings-compose.yml exists"
+  else
+    check_fail "wings-compose.yml missing in $d"
+  fi
+  if [[ -f "$d/wings/etc/config.yml" ]]; then
+    check_ok "Wings config.yml present"
+    if grep -q 'uuid' "$d/wings/etc/config.yml" 2>/dev/null; then
+      check_ok "config.yml contains node UUID"
+    else
+      check_fail "config.yml seems incomplete — check token_id, token and uuid fields"
+    fi
+  else
+    check_fail "Wings config.yml not found in $d/wings/etc/"
+  fi
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "ptero-wings"; then
+    check_ok "Container ptero-wings is running"
+  else
+    check_fail "Container ptero-wings is NOT running — fix: cd $d && docker compose -f wings-compose.yml up -d"
   fi
 }
 
@@ -639,6 +763,12 @@ fix_menu() {
       if echo "$p" | grep -q 'Docker daemon is NOT running'; then
         info "Starting Docker daemon..."
         systemctl start docker && check_ok "Docker daemon started" || check_fail "Could not start Docker"
+      elif echo "$p" | grep -q 'Container NOT running: ptero-wings'; then
+        local wdir; wdir="$(state_get wings_docker_dir)"
+        if [[ -n "$wdir" ]]; then
+          info "Starting Wings container in $wdir..."
+          docker compose -f "$wdir/wings-compose.yml" up -d && check_ok "Wings container started" || check_fail "docker compose up failed for Wings"
+        fi
       elif echo "$p" | grep -q 'Container NOT running'; then
         local cdir; cdir="$(state_get docker_panel_dir)"
         if [[ -n "$cdir" ]]; then
@@ -673,6 +803,7 @@ run_diagnostics() {
   local has_native; has_native="$(state_get pterodactyl_native)"
   local has_docker; has_docker="$(state_get pterodactyl_docker)"
   local has_wings; has_wings="$(state_get wings)"
+  local wings_mode; wings_mode="$(state_get wings_mode)"
   local has_reviactyl; has_reviactyl="$(state_get reviactyl)"
   local has_pyrodactyl; has_pyrodactyl="$(state_get pyrodactyl)"
   local has_elytra; has_elytra="$(state_get elytra)"
@@ -680,7 +811,7 @@ run_diagnostics() {
   echo -e "  ${BOLD}Installed components (tracked by this script):${NC}"
   [[ "$has_native" == "installed" ]]     && echo -e "    ${GREEN}+${NC} Pterodactyl panel (native)"
   [[ "$has_docker" == "installed" ]]     && echo -e "    ${GREEN}+${NC} Pterodactyl panel (Docker)"
-  [[ "$has_wings" == "installed" ]]      && echo -e "    ${GREEN}+${NC} Wings"
+  [[ "$has_wings" == "installed" ]]      && echo -e "    ${GREEN}+${NC} Wings (${wings_mode:-unknown} mode)"
   [[ "$has_reviactyl" == "installed" ]]  && echo -e "    ${GREEN}+${NC} Reviactyl"
   [[ "$has_pyrodactyl" == "installed" ]] && echo -e "    ${GREEN}+${NC} Pyrodactyl"
   [[ "$has_elytra" == "installed" ]]     && echo -e "    ${GREEN}+${NC} Elytra"
@@ -692,7 +823,15 @@ run_diagnostics() {
 
   [[ "$has_native" == "installed" ]]     && diag_pterodactyl_native && echo
   [[ "$has_docker" == "installed" ]]     && diag_pterodactyl_docker && echo
-  [[ "$has_wings" == "installed" ]]      && diag_wings && echo
+
+  if [[ "$has_wings" == "installed" ]]; then
+    if [[ "$wings_mode" == "docker" ]]; then
+      diag_wings_docker && echo
+    else
+      diag_wings_native && echo
+    fi
+  fi
+
   [[ "$has_reviactyl" == "installed" ]]  && diag_reviactyl && echo
   [[ "$has_pyrodactyl" == "installed" ]] && diag_pyrodactyl && echo
   [[ "$has_elytra" == "installed" ]]     && diag_elytra && echo
