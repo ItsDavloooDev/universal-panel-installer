@@ -55,9 +55,8 @@ Once the script starts you will see this menu:
    6) Pyrodactyl
    7) Pyrodactyl + Wings
    8) Pyrodactyl + Elytra
-  10) Blueprint  (native panel only)
-
    9) System diagnostics & health check
+   10) Blueprint  (native panel only)
    0) Exit
 ```
 
