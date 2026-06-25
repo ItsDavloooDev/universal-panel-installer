@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SCRIPT_VERSION="1.0.0"
+SCRIPT_VERSION="2.0.0"
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="${BASE_DIR}/logs"
 mkdir -p "$LOG_DIR"
@@ -15,7 +15,9 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
 NC='\033[0m'
+BOLD='\033[1m'
 
 PANEL_INSTALLER_URL="https://raw.githubusercontent.com/pterodactyl-installer/pterodactyl-installer/master/install.sh"
 REVIACTYL_INSTALLER_URL="https://raw.githubusercontent.com/reviactyl/reviactyl/main/install.sh"
@@ -23,62 +25,93 @@ PYRODACTYL_REPO_URL="https://github.com/pyrohost/pyrodactyl"
 ELYTRA_REPO_URL="https://github.com/pyrohost/elytra"
 DOCKER_SCRIPT_URL="https://get.docker.com"
 COMPOSE_BIN="/usr/local/bin/docker-compose"
+STATE_FILE="/etc/universal-panel-installer/state.json"
 
-trap 'echo -e "${RED}[ERROR]${NC} Command failed on line $LINENO. Check ${LOG_FILE}"' ERR
+mkdir -p /etc/universal-panel-installer
+[[ -f "$STATE_FILE" ]] || echo '{}' > "$STATE_FILE"
+
+trap 'echo -e "${RED}[ERROR]${NC} Script failed on line $LINENO — check ${LOG_FILE}"' ERR
 
 print_banner() {
   clear || true
+  echo -e "${CYAN}${BOLD}"
   cat <<'BANNER'
-██████╗ ███████╗███████╗██████╗  ██████╗     ███████╗██╗   ██╗██╗███████╗███████╗
-██╔══██╗╚══██╔══╝██╔════╝██╔══██╗██╔═══██╗    ██╔════╝██║   ██║██║╚══██╔══╝██╔════╝
-██████╔╝   ██║   █████╗  ██████╔╝██║   ██║    █████╗  ██║   ██║██║   ██║   █████╗
-██╔═══╝    ██║   ██╔══╝  ██╔══██╗██║   ██║    ╚═══██╗██║   ██║██║   ██║   ██╔══╝
-██║        ██║   ███████╗██║  ██║╚██████╔╝    ███████║╚██████╔╝██║   ██║   ███████╗
-╚═╝        ╚═╝   ╚══════╝╚═╝  ╚═╝ ╚═════╝     ╚══════╝ ╚═════╝ ╚═╝   ╚═╝   ╚══════╝
+ ██╗   ██╗███╗   ██╗██╗██╗   ██╗███████╗██████╗ ███████╗ █████╗ ██╗
+ ██║   ██║████╗  ██║██║██║   ██║██╔════╝██╔══██╗██╔════╝██╔══██╗██║
+ ██║   ██║██╔██╗ ██║██║██║   ██║█████╗  ██████╔╝███████╗███████║██║
+ ██║   ██║██║╚██╗██║██║╚██╗ ██╔╝██╔══╝  ██╔══██╗╚════██║██╔══██║██║
+ ╚██████╔╝██║ ╚████║██║ ╚████╔╝ ███████╗██║  ██║███████║██║  ██║███████╗
+  ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝
+ ██████╗  █████╗ ███╗   ██╗███████╗██╗         ██╗███╗   ██╗███████╗████████╗
+ ██╔══██╗██╔══██╗████╗  ██║██╔════╝██║         ██║████╗  ██║██╔════╝╚══██╔══╝
+ ██████╔╝███████║██╔██╗ ██║█████╗  ██║         ██║██╔██╗ ██║███████╗   ██║
+ ██╔═══╝ ██╔══██║██║╚██╗██║██╔══╝  ██║         ██║██║╚██╗██║╚════██║   ██║
+ ██║     ██║  ██║██║ ╚████║███████╗███████╗     ██║██║ ╚████║███████║   ██║
+ ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝╚══════╝     ╚═╝╚═╝  ╚═══╝╚══════╝   ╚═╝
 BANNER
-  echo
-  echo -e "${CYAN}Universal Panel Installer v${SCRIPT_VERSION}${NC}"
-  echo -e "${CYAN}Log file:${NC} ${LOG_FILE}"
+  echo -e "${NC}"
+  echo -e "  ${CYAN}Universal Panel Installer ${BOLD}v${SCRIPT_VERSION}${NC}"
+  echo -e "  ${CYAN}Log:${NC} ${LOG_FILE}"
   echo
 }
 
-info()    { echo -e "${BLUE}[INFO]${NC} $*"; }
-success() { echo -e "${GREEN}[OK]${NC} $*"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
+info()    { echo -e "${BLUE}[INFO]${NC}  $*"; }
+success() { echo -e "${GREEN}[OK]${NC}    $*"; }
+warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*"; }
+step()    { echo -e "\n${MAGENTA}${BOLD}>>> $*${NC}"; }
 
 require_root() {
   if [[ ${EUID} -ne 0 ]]; then
-    error "Run this script as root. Example: sudo bash install.sh"
+    error "Run this script as root: sudo bash install.sh"
     exit 1
   fi
 }
 
-pause() {
-  read -r -p "Press Enter to continue..." _
-}
+pause() { echo; read -r -p "Press Enter to return to the menu..." _; }
 
 ask_input() {
-  local prompt="$1"
-  local default_value="${2:-}"
-  local value
+  local prompt="$1" default_value="${2:-}" value
   if [[ -n "$default_value" ]]; then
-    read -r -p "$prompt [$default_value]: " value
+    read -r -p "  ${CYAN}?${NC} $prompt [${default_value}]: " value
     echo "${value:-$default_value}"
   else
-    read -r -p "$prompt: " value
+    while true; do
+      read -r -p "  ${CYAN}?${NC} $prompt: " value
+      [[ -n "$value" ]] && break
+      warn "This field cannot be empty."
+    done
     echo "$value"
   fi
 }
 
+ask_input_optional() {
+  local prompt="$1" value
+  read -r -p "  ${CYAN}?${NC} $prompt (press Enter to skip): " value
+  echo "$value"
+}
+
+ask_password() {
+  local prompt="$1" value confirm
+  while true; do
+    read -r -s -p "  ${CYAN}?${NC} $prompt: " value; echo
+    [[ -n "$value" ]] && break
+    warn "Password cannot be empty."
+  done
+  read -r -s -p "  ${CYAN}?${NC} Confirm password: " confirm; echo
+  if [[ "$value" != "$confirm" ]]; then
+    warn "Passwords do not match, try again."
+    ask_password "$prompt"
+    return
+  fi
+  echo "$value"
+}
+
 ask_yes_no() {
-  local prompt="$1"
-  local default_answer="${2:-y}"
-  local answer
-  local suffix="[Y/n]"
+  local prompt="$1" default_answer="${2:-y}" answer suffix="[Y/n]"
   [[ "$default_answer" == "n" ]] && suffix="[y/N]"
   while true; do
-    read -r -p "$prompt $suffix: " answer
+    read -r -p "  ${CYAN}?${NC} $prompt $suffix: " answer
     answer="${answer:-$default_answer}"
     case "$answer" in
       y|Y|yes|YES) return 0 ;;
@@ -89,36 +122,41 @@ ask_yes_no() {
 }
 
 select_option() {
-  local title="$1"
-  shift
+  local title="$1"; shift
   local options=("$@")
-  echo "$title"
+  echo -e "  ${BOLD}$title${NC}"
   local i=1
-  for option in "${options[@]}"; do
-    echo "  $i) $option"
-    ((i++))
-  done
+  for o in "${options[@]}"; do echo "    $i) $o"; ((i++)); done
   local choice
   while true; do
-    read -r -p "Choose an option [1-${#options[@]}]: " choice
+    read -r -p "  Your choice [1-${#options[@]}]: " choice
     if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#options[@]} )); then
-      echo "$choice"
-      return 0
+      echo "$choice"; return 0
     fi
     warn "Invalid choice."
   done
 }
 
+generate_app_key() {
+  python3 -c "import secrets,base64; print('base64:' + base64.b64encode(secrets.token_bytes(32)).decode())" 2>/dev/null \
+    || openssl rand -base64 32 | awk '{print "base64:" $1}'
+}
+
+state_set() { local key="$1" val="$2"
+  local tmp; tmp="$(mktemp)"
+  jq --arg k "$key" --arg v "$val" '.[$k] = $v' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
+state_get() { jq -r --arg k "$1" '.[$k] // empty' "$STATE_FILE"; }
+
 ensure_supported_os() {
-  [[ -f /etc/os-release ]] || { error "Unsupported system: /etc/os-release not found"; exit 1; }
+  [[ -f /etc/os-release ]] || { error "/etc/os-release not found"; exit 1; }
   . /etc/os-release
   info "Detected OS: ${PRETTY_NAME:-Unknown Linux}"
   case "${ID:-}" in
-    ubuntu|debian)
-      success "Supported distribution detected."
-      ;;
+    ubuntu|debian) success "Supported distribution." ;;
     *)
-      warn "This script is optimized for Ubuntu and Debian. Continuing may fail."
+      warn "This script is optimized for Ubuntu/Debian."
       ask_yes_no "Continue on unsupported distro?" "n" || exit 1
       ;;
   esac
@@ -129,102 +167,128 @@ install_base_packages() {
   apt-get update -y
   apt-get upgrade -y
   apt-get install -y curl wget git jq ca-certificates lsb-release gnupg \
-    apt-transport-https software-properties-common unzip tar ufw sudo bash-completion
+    apt-transport-https software-properties-common unzip tar ufw sudo bash-completion python3
   success "Base dependencies installed."
 }
 
 configure_firewall_panel() {
-  if ask_yes_no "Configure UFW rules for the panel (22, 80, 443, 8080)?" "y"; then
-    ufw allow 22/tcp   || true
-    ufw allow 80/tcp   || true
-    ufw allow 443/tcp  || true
-    ufw allow 8080/tcp || true
+  if ask_yes_no "Configure UFW firewall for the panel? (opens 22, 80, 443, 8080)" "y"; then
+    ufw allow 22/tcp || true; ufw allow 80/tcp || true
+    ufw allow 443/tcp || true; ufw allow 8080/tcp || true
     if ask_yes_no "Enable UFW now?" "n"; then ufw --force enable; fi
-    success "Firewall rules applied for the panel."
+    success "Panel firewall rules applied."
   fi
 }
 
 configure_firewall_wings() {
-  if ask_yes_no "Configure UFW rules for Wings (22, 8080, 2022)?" "y"; then
-    ufw allow 22/tcp   || true
-    ufw allow 8080/tcp || true
-    ufw allow 2022/tcp || true
+  if ask_yes_no "Configure UFW firewall for Wings? (opens 22, 8080, 2022)" "y"; then
+    ufw allow 22/tcp || true; ufw allow 8080/tcp || true; ufw allow 2022/tcp || true
     if ask_yes_no "Enable UFW now?" "n"; then ufw --force enable; fi
-    success "Firewall rules applied for Wings."
+    success "Wings firewall rules applied."
   fi
 }
 
 install_docker_engine() {
   if command -v docker >/dev/null 2>&1; then
-    success "Docker is already installed."
+    success "Docker already installed: $(docker --version)"
   else
-    info "Installing Docker using the official convenience script..."
+    info "Installing Docker via official script..."
     curl -fsSL "$DOCKER_SCRIPT_URL" | sh
     systemctl enable --now docker
     success "Docker installed and started."
   fi
-
   if docker compose version >/dev/null 2>&1; then
-    success "Docker Compose plugin is already available."
+    success "Docker Compose plugin available."
   else
-    info "Installing Docker Compose plugin..."
     apt-get install -y docker-compose-plugin || true
     if ! docker compose version >/dev/null 2>&1; then
-      warn "Plugin not found, installing standalone docker-compose binary..."
       curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
-        -o "$COMPOSE_BIN"
-      chmod +x "$COMPOSE_BIN"
-      success "Standalone docker-compose installed at $COMPOSE_BIN"
+        -o "$COMPOSE_BIN" && chmod +x "$COMPOSE_BIN"
+      success "Standalone docker-compose installed."
     fi
   fi
 }
 
-ensure_git_repo_cloned_or_updated() {
-  local repo_url="$1"
-  local target_dir="$2"
-  if [[ -d "$target_dir/.git" ]]; then
-    info "Updating existing repository in $target_dir"
-    git -C "$target_dir" pull --ff-only
+ensure_git_repo() {
+  local url="$1" dir="$2"
+  if [[ -d "$dir/.git" ]]; then
+    info "Updating repo in $dir"
+    git -C "$dir" pull --ff-only
   else
-    info "Cloning $repo_url into $target_dir"
-    git clone "$repo_url" "$target_dir"
+    info "Cloning $url into $dir"
+    git clone "$url" "$dir"
   fi
 }
 
 run_remote_installer() {
-  local url="$1"
-  local label="$2"
-  info "Downloading and executing $label installer..."
+  local url="$1" label="$2"
+  info "Fetching and running $label installer..."
   bash <(curl -s "$url")
 }
 
-install_pterodactyl_native() {
-  info "Starting native Pterodactyl panel installer..."
-  warn "The upstream installer will ask for panel, web server, database and SSL details."
-  configure_firewall_panel
-  run_remote_installer "$PANEL_INSTALLER_URL" "Pterodactyl"
-  success "Native Pterodactyl installer finished."
+collect_docker_panel_config() {
+  step "Docker panel configuration"
+  echo -e "  ${YELLOW}Fill in every field — all values will be written directly into docker-compose.yml${NC}\n"
+
+  PTERO_STACK_DIR="$(ask_input 'Stack directory on disk' '/opt/pterodactyl')"
+  PTERO_DOMAIN="$(ask_input 'Panel domain (e.g. panel.example.com)')"
+  PTERO_TIMEZONE="$(ask_input 'Server timezone' 'Europe/Rome')"
+
+  step "Database credentials"
+  PTERO_DB_NAME="$(ask_input 'Database name' 'panel')"
+  PTERO_DB_USER="$(ask_input 'Database user' 'pterodactyl')"
+  PTERO_DB_PASS="$(ask_password 'Database user password')"
+  PTERO_DB_ROOT_PASS="$(ask_password 'MariaDB root password')"
+
+  step "Application key"
+  local generated_key; generated_key="$(generate_app_key)"
+  info "Auto-generated APP_KEY: ${generated_key}"
+  local custom_key
+  custom_key="$(ask_input_optional 'Enter a custom APP_KEY or leave blank to use the generated one')"
+  PTERO_APP_KEY="${custom_key:-$generated_key}"
+
+  step "Mail configuration (optional — press Enter on each field to skip)"
+  PTERO_MAIL_HOST="$(ask_input_optional 'SMTP host (e.g. smtp.gmail.com)')"
+  PTERO_MAIL_PORT="$(ask_input_optional 'SMTP port (e.g. 587)')"
+  PTERO_MAIL_USER="$(ask_input_optional 'SMTP username / email')"
+  PTERO_MAIL_PASS=""
+  if [[ -n "$PTERO_MAIL_HOST" ]]; then
+    read -r -s -p "  ${CYAN}?${NC} SMTP password (Enter to skip): " PTERO_MAIL_PASS; echo
+  fi
+  PTERO_MAIL_FROM="$(ask_input_optional 'From address (e.g. noreply@example.com)')"
+  PTERO_MAIL_FROM_NAME="$(ask_input_optional 'From name (e.g. Pterodactyl)')"
+  PTERO_MAIL_ENCRYPTION="$(ask_input_optional 'Encryption: tls or ssl (default: tls)')"
+  PTERO_MAIL_ENCRYPTION="${PTERO_MAIL_ENCRYPTION:-tls}"
 }
 
 write_docker_compose_pterodactyl() {
-  local stack_dir="$1"
-  local panel_domain="$2"
-  local timezone="$3"
+  local d="$PTERO_STACK_DIR"
+  mkdir -p "$d/nginx/conf.d" "$d/panel/var" "$d/mariadb" "$d/redis"
 
-  mkdir -p "$stack_dir/nginx/conf.d" "$stack_dir/panel/var" "$stack_dir/mariadb" "$stack_dir/redis"
+  local mail_env=""
+  if [[ -n "$PTERO_MAIL_HOST" ]]; then
+    mail_env="      MAIL_DRIVER: smtp
+      MAIL_HOST: ${PTERO_MAIL_HOST}
+      MAIL_PORT: ${PTERO_MAIL_PORT:-587}
+      MAIL_USERNAME: ${PTERO_MAIL_USER}
+      MAIL_PASSWORD: ${PTERO_MAIL_PASS}
+      MAIL_ENCRYPTION: ${PTERO_MAIL_ENCRYPTION}
+      MAIL_FROM: ${PTERO_MAIL_FROM}
+      MAIL_FROM_NAME: ${PTERO_MAIL_FROM_NAME}"
+  fi
 
-  cat > "$stack_dir/docker-compose.yml" <<COMPOSE
+  cat > "$d/docker-compose.yml" <<COMPOSE
 services:
   mariadb:
     image: mariadb:11
     container_name: ptero-mariadb
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: change_me_root_password
-      MYSQL_DATABASE: panel
-      MYSQL_USER: pterodactyl
-      MYSQL_PASSWORD: change_me_panel_password
-      TZ: ${timezone}
+      MYSQL_ROOT_PASSWORD: ${PTERO_DB_ROOT_PASS}
+      MYSQL_DATABASE: ${PTERO_DB_NAME}
+      MYSQL_USER: ${PTERO_DB_USER}
+      MYSQL_PASSWORD: ${PTERO_DB_PASS}
+      TZ: ${PTERO_TIMEZONE}
     volumes:
       - ./mariadb:/var/lib/mysql
 
@@ -244,20 +308,21 @@ services:
       - mariadb
       - redis
     environment:
-      APP_URL: https://${panel_domain}
-      APP_TIMEZONE: ${timezone}
+      APP_URL: https://${PTERO_DOMAIN}
+      APP_TIMEZONE: ${PTERO_TIMEZONE}
+      APP_KEY: ${PTERO_APP_KEY}
+      APP_ENV: production
+      APP_DEBUG: "false"
       DB_HOST: mariadb
       DB_PORT: 3306
-      DB_DATABASE: panel
-      DB_USERNAME: pterodactyl
-      DB_PASSWORD: change_me_panel_password
+      DB_DATABASE: ${PTERO_DB_NAME}
+      DB_USERNAME: ${PTERO_DB_USER}
+      DB_PASSWORD: ${PTERO_DB_PASS}
       REDIS_HOST: redis
       CACHE_DRIVER: redis
       SESSION_DRIVER: redis
       QUEUE_CONNECTION: redis
-      APP_ENV: production
-      APP_DEBUG: "false"
-      APP_KEY: base64:generate_me_with_artisan_or_panel_docs
+${mail_env}
     volumes:
       - ./panel/var:/app/var
 
@@ -274,10 +339,10 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d
 COMPOSE
 
-  cat > "$stack_dir/nginx/conf.d/panel.conf" <<NGINX
+  cat > "$d/nginx/conf.d/panel.conf" <<NGINX
 server {
     listen 80;
-    server_name ${panel_domain};
+    server_name ${PTERO_DOMAIN};
 
     location / {
         proxy_pass http://panel:80;
@@ -289,136 +354,389 @@ server {
 }
 NGINX
 
-  success "Docker Compose files written to $stack_dir"
+  state_set "docker_panel_dir" "$d"
+  state_set "docker_panel_domain" "$PTERO_DOMAIN"
+  success "All files written to $d"
+  echo
+  info "Start the stack with:"
+  echo "  cd $d && docker compose up -d"
+}
+
+install_pterodactyl_native() {
+  info "Starting native Pterodactyl installer (upstream)..."
+  warn "The upstream script will ask its own questions for web server, DB, SSL and SMTP."
+  configure_firewall_panel
+  run_remote_installer "$PANEL_INSTALLER_URL" "Pterodactyl"
+  state_set "pterodactyl_native" "installed"
+  success "Native Pterodactyl installer finished."
 }
 
 install_pterodactyl_docker() {
-  local stack_dir panel_domain timezone
-  stack_dir="$(ask_input 'Docker stack directory' '/opt/pterodactyl-docker')"
-  panel_domain="$(ask_input 'Panel domain' 'panel.example.com')"
-  timezone="$(ask_input 'Timezone' 'UTC')"
+  collect_docker_panel_config
   install_docker_engine
   configure_firewall_panel
-  write_docker_compose_pterodactyl "$stack_dir" "$panel_domain" "$timezone"
-  echo
-  echo "Next steps:"
-  echo "1. Edit $stack_dir/docker-compose.yml and replace every change_me_* value."
-  echo "2. Add SSL, mail settings and a valid APP_KEY before production use."
-  echo "3. Start the stack with: cd $stack_dir && docker compose up -d"
-  echo "4. Complete panel setup following the official documentation."
+  write_docker_compose_pterodactyl
+  state_set "pterodactyl_docker" "installed"
 }
 
 install_wings() {
-  info "Starting Wings installer..."
+  info "Starting Wings installer (upstream)..."
   install_docker_engine
   configure_firewall_wings
-  run_remote_installer "$PANEL_INSTALLER_URL" "Pterodactyl / Wings"
+  run_remote_installer "$PANEL_INSTALLER_URL" "Wings"
+  state_set "wings" "installed"
   success "Wings installer finished."
 }
 
 install_reviactyl() {
   info "Starting Reviactyl installer..."
-  warn "Keep your panel URL and API credentials ready before continuing."
+  warn "Have your panel URL and API key ready."
   run_remote_installer "$REVIACTYL_INSTALLER_URL" "Reviactyl"
+  state_set "reviactyl" "installed"
   success "Reviactyl installer finished."
 }
 
 install_pyrodactyl() {
-  local target_dir
-  target_dir="$(ask_input 'Pyrodactyl install directory' '/opt/pyrodactyl')"
+  step "Pyrodactyl configuration"
+  local dir
+  dir="$(ask_input 'Install directory' '/opt/pyrodactyl')"
   install_docker_engine
-  ensure_git_repo_cloned_or_updated "$PYRODACTYL_REPO_URL" "$target_dir"
+  ensure_git_repo "$PYRODACTYL_REPO_URL" "$dir"
+  state_set "pyrodactyl_dir" "$dir"
+  state_set "pyrodactyl" "installed"
   echo
-  echo "Pyrodactyl repository ready at $target_dir"
-  echo "Copy the example env file, fill the values and deploy with the upstream method."
-  success "Pyrodactyl source prepared."
+  info "Repository ready at $dir — copy .env.example to .env, fill the values and start the app."
+  success "Pyrodactyl prepared."
 }
 
 install_elytra() {
-  local target_dir
-  target_dir="$(ask_input 'Elytra install directory' '/opt/elytra')"
+  step "Elytra configuration"
+  local dir
+  dir="$(ask_input 'Install directory' '/opt/elytra')"
   install_docker_engine
-  ensure_git_repo_cloned_or_updated "$ELYTRA_REPO_URL" "$target_dir"
+  ensure_git_repo "$ELYTRA_REPO_URL" "$dir"
+  state_set "elytra_dir" "$dir"
+  state_set "elytra" "installed"
   echo
-  echo "Elytra repository ready at $target_dir"
-  echo "Copy the example env file, fill the values and deploy with the upstream method."
-  success "Elytra source prepared."
-}
-
-show_setup_guides() {
-  cat <<'GUIDE'
-
-==================== POST-INSTALL CHECKLIST ====================
-
-Pterodactyl panel
-  - Point your domain DNS to the server IP.
-  - Configure SSL with Cloudflare Tunnel, Nginx Proxy Manager, Traefik or Certbot.
-  - Complete panel environment setup: queue worker, cron, mail settings.
-  - Create the first admin user.
-  - Create node allocations for every Wings node.
-
-Wings
-  - Create a node inside the panel.
-  - Generate the node config from the panel and save it to /etc/pterodactyl/config.yml.
-  - Start Wings: systemctl enable --now wings
-  - Validate node connectivity from the panel.
-
-Reviactyl
-  - Prepare your panel URL and API key.
-  - Complete the installer prompts.
-  - Put it behind a reverse proxy with HTTPS.
-  - Create the admin account and bind your Pterodactyl instance.
-
-Pyrodactyl
-  - Open the cloned repository directory.
-  - Copy .env.example to .env and fill every required value.
-  - Build or start the app following the upstream documentation.
-  - Put it behind a reverse proxy and verify workers or webhooks if used.
-
-Elytra
-  - Open the cloned repository directory.
-  - Copy .env.example to .env and fill auth, public URL and panel credentials.
-  - Start the stack using the upstream instructions.
-  - Test login, API calls and dashboard rendering.
-
-Useful links
-  Pterodactyl installer : https://github.com/pterodactyl-installer/pterodactyl-installer
-  Reviactyl             : https://reviactyl.app/
-  Pyrodactyl            : https://pyrodactyl.dev/
-  Wings docs            : https://pterodactyl.io/wings/1.0/installing.html
-
-================================================================
-GUIDE
+  info "Repository ready at $dir — copy .env.example to .env, fill the values and start the app."
+  success "Elytra prepared."
 }
 
 choose_panel_mode() {
   local mode
   mode=$(select_option "How do you want to install the Pterodactyl panel?" \
     "Native on the machine" \
-    "Dockerized stack")
+    "Dockerized stack (fully configured by this script)")
   case "$mode" in
     1) install_pterodactyl_native ;;
     2) install_pterodactyl_docker ;;
   esac
 }
 
+
+check_ok()  { echo -e "    ${GREEN}[OK]${NC}    $*"; }
+check_fail(){ echo -e "    ${RED}[FAIL]${NC}  $*"; DIAG_PROBLEMS+=( "$*" ); }
+check_warn(){ echo -e "    ${YELLOW}[WARN]${NC}  $*"; DIAG_WARNINGS+=( "$*" ); }
+
+diag_docker() {
+  echo -e "  ${BOLD}Docker${NC}"
+  if command -v docker >/dev/null 2>&1; then
+    check_ok "Docker installed: $(docker --version 2>/dev/null)"
+    if systemctl is-active --quiet docker 2>/dev/null; then
+      check_ok "Docker daemon is running"
+    else
+      check_fail "Docker daemon is NOT running — fix: systemctl start docker"
+    fi
+    if docker compose version >/dev/null 2>&1; then
+      check_ok "Docker Compose available: $(docker compose version 2>/dev/null)"
+    else
+      check_warn "Docker Compose not found — install with: apt-get install docker-compose-plugin"
+    fi
+  else
+    check_warn "Docker is not installed"
+  fi
+}
+
+diag_pterodactyl_native() {
+  echo -e "  ${BOLD}Pterodactyl panel (native)${NC}"
+  if [[ "$(state_get pterodactyl_native)" == "installed" ]]; then
+    check_ok "Installed via this script"
+  else
+    check_warn "Not installed via this script (may still be present manually)"
+  fi
+  if [[ -f /etc/pterodactyl/config.yml ]] || [[ -d /var/www/pterodactyl ]]; then
+    check_ok "Panel directory or config found on disk"
+  else
+    check_warn "Panel directory/config not detected at standard paths"
+  fi
+  for svc in nginx apache2; do
+    if systemctl is-active --quiet "$svc" 2>/dev/null; then
+      check_ok "Web server ($svc) is running"
+    fi
+  done
+  for svc in mariadb mysql; do
+    if systemctl is-active --quiet "$svc" 2>/dev/null; then
+      check_ok "Database ($svc) is running"
+    fi
+  done
+  if systemctl is-active --quiet pteroq 2>/dev/null; then
+    check_ok "Queue worker (pteroq) is running"
+  else
+    check_warn "Queue worker (pteroq) is not running — fix: systemctl start pteroq"
+  fi
+  if crontab -l 2>/dev/null | grep -q 'artisan'; then
+    check_ok "Artisan cron entry found"
+  else
+    check_warn "Artisan cron not detected — add: * * * * * php /var/www/pterodactyl/artisan schedule:run"
+  fi
+}
+
+diag_pterodactyl_docker() {
+  echo -e "  ${BOLD}Pterodactyl panel (Docker)${NC}"
+  local d; d="$(state_get docker_panel_dir)"
+  if [[ -z "$d" ]]; then
+    check_warn "No Docker panel path tracked — skipping Docker panel checks"
+    return
+  fi
+  check_ok "Stack directory: $d"
+  if [[ -f "$d/docker-compose.yml" ]]; then
+    check_ok "docker-compose.yml exists"
+  else
+    check_fail "docker-compose.yml missing in $d"
+  fi
+  for cname in ptero-mariadb ptero-redis ptero-panel ptero-nginx; do
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$cname"; then
+      check_ok "Container running: $cname"
+    else
+      check_fail "Container NOT running: $cname — fix: cd $d && docker compose up -d"
+    fi
+  done
+}
+
+diag_wings() {
+  echo -e "  ${BOLD}Wings${NC}"
+  if command -v wings >/dev/null 2>&1; then
+    check_ok "Wings binary found: $(wings --version 2>/dev/null || echo 'version unknown')"
+  else
+    check_warn "Wings binary not found at standard path"
+  fi
+  if [[ -f /etc/pterodactyl/config.yml ]]; then
+    check_ok "/etc/pterodactyl/config.yml present"
+    if grep -q 'uuid' /etc/pterodactyl/config.yml 2>/dev/null; then
+      check_ok "config.yml contains node UUID"
+    else
+      check_fail "config.yml seems incomplete — regenerate from panel node page"
+    fi
+  else
+    check_fail "/etc/pterodactyl/config.yml not found — paste it from the panel node page"
+  fi
+  if systemctl is-active --quiet wings 2>/dev/null; then
+    check_ok "Wings service is running"
+  else
+    check_fail "Wings service is NOT running — fix: systemctl enable --now wings"
+  fi
+}
+
+diag_reviactyl() {
+  echo -e "  ${BOLD}Reviactyl${NC}"
+  if [[ "$(state_get reviactyl)" == "installed" ]]; then
+    check_ok "Installed via this script"
+  else
+    check_warn "Not installed via this script (may still be present manually)"
+  fi
+  for cname in reviactyl; do
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -qi "$cname"; then
+      check_ok "Reviactyl container running"
+    fi
+  done
+}
+
+diag_pyrodactyl() {
+  echo -e "  ${BOLD}Pyrodactyl${NC}"
+  local dir; dir="$(state_get pyrodactyl_dir)"
+  if [[ -z "$dir" ]]; then
+    check_warn "No Pyrodactyl path tracked — skipping"
+    return
+  fi
+  if [[ -d "$dir/.git" ]]; then
+    check_ok "Repository present at $dir"
+    local last_commit; last_commit="$(git -C "$dir" log -1 --format='%h %s' 2>/dev/null)"
+    check_ok "Last commit: $last_commit"
+  else
+    check_fail "Repository not found at $dir"
+  fi
+  if [[ -f "$dir/.env" ]]; then
+    check_ok ".env file found"
+    if grep -qE '^APP_KEY=.+' "$dir/.env" 2>/dev/null; then
+      check_ok "APP_KEY is set in .env"
+    else
+      check_fail "APP_KEY is missing or empty in .env"
+    fi
+    if grep -qE '^DB_(HOST|DATABASE)=' "$dir/.env" 2>/dev/null; then
+      check_ok "Database vars found in .env"
+    else
+      check_warn "DB_HOST / DB_DATABASE not found in .env"
+    fi
+  else
+    check_fail ".env file not found — copy .env.example to .env and fill the values"
+  fi
+}
+
+diag_elytra() {
+  echo -e "  ${BOLD}Elytra${NC}"
+  local dir; dir="$(state_get elytra_dir)"
+  if [[ -z "$dir" ]]; then
+    check_warn "No Elytra path tracked — skipping"
+    return
+  fi
+  if [[ -d "$dir/.git" ]]; then
+    check_ok "Repository present at $dir"
+    local last_commit; last_commit="$(git -C "$dir" log -1 --format='%h %s' 2>/dev/null)"
+    check_ok "Last commit: $last_commit"
+  else
+    check_fail "Repository not found at $dir"
+  fi
+  if [[ -f "$dir/.env" ]]; then
+    check_ok ".env file found"
+  else
+    check_fail ".env file not found — copy .env.example to .env and fill the values"
+  fi
+}
+
+diag_system() {
+  echo -e "  ${BOLD}System${NC}"
+  local ram_mb; ram_mb=$(free -m | awk '/Mem:/{print $2}')
+  if (( ram_mb >= 1024 )); then
+    check_ok "RAM: ${ram_mb}MB"
+  else
+    check_warn "RAM is low (${ram_mb}MB) — at least 1GB recommended"
+  fi
+  local disk_free; disk_free=$(df -BG / | awk 'NR==2{gsub(/G/,"",$4); print $4}')
+  if (( disk_free >= 10 )); then
+    check_ok "Free disk: ${disk_free}GB"
+  else
+    check_warn "Low disk space (${disk_free}GB free) — at least 10GB recommended"
+  fi
+  if systemctl is-active --quiet ufw 2>/dev/null; then
+    check_ok "UFW firewall is active"
+  else
+    check_warn "UFW is not active — consider enabling it"
+  fi
+}
+
+fix_menu() {
+  local problems=("$@")
+  echo
+  echo -e "  ${RED}${BOLD}The following problems were found:${NC}"
+  local i=1
+  for p in "${problems[@]}"; do
+    echo -e "    ${i}) ${RED}${p}${NC}"
+    ((i++))
+  done
+  echo
+  if ask_yes_no "Do you want the script to attempt auto-fixes for all the problems above?" "y"; then
+    for p in "${problems[@]}"; do
+      if echo "$p" | grep -q 'Docker daemon is NOT running'; then
+        info "Starting Docker daemon..."
+        systemctl start docker && check_ok "Docker daemon started" || check_fail "Could not start Docker"
+      elif echo "$p" | grep -q 'Container NOT running'; then
+        local cdir; cdir="$(state_get docker_panel_dir)"
+        if [[ -n "$cdir" ]]; then
+          info "Starting Docker Compose stack in $cdir..."
+          docker compose -f "$cdir/docker-compose.yml" up -d && check_ok "Stack started" || check_fail "docker compose up failed"
+        fi
+      elif echo "$p" | grep -q 'Wings service is NOT running'; then
+        info "Enabling and starting Wings..."
+        systemctl enable --now wings && check_ok "Wings started" || check_fail "Could not start Wings"
+      elif echo "$p" | grep -q 'Queue worker.*not running'; then
+        info "Starting pterodactyl queue worker..."
+        systemctl start pteroq && check_ok "Queue worker started" || check_fail "Could not start pteroq"
+      else
+        warn "No automatic fix available for: $p"
+        info "You will need to resolve this manually."
+      fi
+    done
+  fi
+}
+
+run_diagnostics() {
+  print_banner
+  step "System health check"
+  DIAG_PROBLEMS=()
+  DIAG_WARNINGS=()
+
+  diag_system
+  echo
+  diag_docker
+  echo
+
+  local has_native; has_native="$(state_get pterodactyl_native)"
+  local has_docker; has_docker="$(state_get pterodactyl_docker)"
+  local has_wings; has_wings="$(state_get wings)"
+  local has_reviactyl; has_reviactyl="$(state_get reviactyl)"
+  local has_pyrodactyl; has_pyrodactyl="$(state_get pyrodactyl)"
+  local has_elytra; has_elytra="$(state_get elytra)"
+
+  echo -e "  ${BOLD}Installed components (tracked by this script):${NC}"
+  [[ "$has_native" == "installed" ]]     && echo -e "    ${GREEN}+${NC} Pterodactyl panel (native)"
+  [[ "$has_docker" == "installed" ]]     && echo -e "    ${GREEN}+${NC} Pterodactyl panel (Docker)"
+  [[ "$has_wings" == "installed" ]]      && echo -e "    ${GREEN}+${NC} Wings"
+  [[ "$has_reviactyl" == "installed" ]]  && echo -e "    ${GREEN}+${NC} Reviactyl"
+  [[ "$has_pyrodactyl" == "installed" ]] && echo -e "    ${GREEN}+${NC} Pyrodactyl"
+  [[ "$has_elytra" == "installed" ]]     && echo -e "    ${GREEN}+${NC} Elytra"
+
+  if [[ -z "$has_native$has_docker$has_wings$has_reviactyl$has_pyrodactyl$has_elytra" ]]; then
+    check_warn "Nothing has been installed via this script yet."
+  fi
+  echo
+
+  [[ "$has_native" == "installed" ]]     && diag_pterodactyl_native && echo
+  [[ "$has_docker" == "installed" ]]     && diag_pterodactyl_docker && echo
+  [[ "$has_wings" == "installed" ]]      && diag_wings && echo
+  [[ "$has_reviactyl" == "installed" ]]  && diag_reviactyl && echo
+  [[ "$has_pyrodactyl" == "installed" ]] && diag_pyrodactyl && echo
+  [[ "$has_elytra" == "installed" ]]     && diag_elytra && echo
+
+  echo -e "  ${BOLD}Summary${NC}"
+  if (( ${#DIAG_PROBLEMS[@]} == 0 )) && (( ${#DIAG_WARNINGS[@]} == 0 )); then
+    echo -e "    ${GREEN}${BOLD}Everything looks healthy!${NC}"
+  else
+    if (( ${#DIAG_PROBLEMS[@]} > 0 )); then
+      echo -e "    ${RED}Problems found:  ${#DIAG_PROBLEMS[@]}${NC}"
+    fi
+    if (( ${#DIAG_WARNINGS[@]} > 0 )); then
+      echo -e "    ${YELLOW}Warnings found:  ${#DIAG_WARNINGS[@]}${NC}"
+    fi
+    echo
+    echo -e "  ${BOLD}Warnings (no immediate action needed):${NC}"
+    for w in "${DIAG_WARNINGS[@]}"; do echo -e "    ${YELLOW}-${NC} $w"; done
+    if (( ${#DIAG_PROBLEMS[@]} > 0 )); then
+      fix_menu "${DIAG_PROBLEMS[@]}"
+    fi
+  fi
+  echo
+  info "Full log saved at $LOG_FILE"
+}
+
 main_menu() {
   while true; do
     print_banner
-    echo "What do you want to install?"
+    echo -e "  ${BOLD}What do you want to install?${NC}"
     echo
-    echo "  1) Pterodactyl panel"
-    echo "  2) Wings"
-    echo "  3) Pterodactyl panel + Wings"
-    echo "  4) Reviactyl"
-    echo "  5) Reviactyl + Wings"
-    echo "  6) Pyrodactyl"
-    echo "  7) Pyrodactyl + Wings"
-    echo "  8) Pyrodactyl + Elytra"
-    echo "  9) Post-install checklist"
-    echo "  0) Exit"
+    echo "    1) Pterodactyl panel"
+    echo "    2) Wings"
+    echo "    3) Pterodactyl panel + Wings"
+    echo "    4) Reviactyl"
+    echo "    5) Reviactyl + Wings"
+    echo "    6) Pyrodactyl"
+    echo "    7) Pyrodactyl + Wings"
+    echo "    8) Pyrodactyl + Elytra"
     echo
-    read -r -p "Your choice: " choice
+    echo -e "    ${CYAN}9) System diagnostics & health check${NC}"
+    echo "    0) Exit"
+    echo
+    read -r -p "  Your choice: " choice
+    echo
     case "$choice" in
       1) choose_panel_mode; pause ;;
       2) install_wings; pause ;;
@@ -428,9 +746,9 @@ main_menu() {
       6) install_pyrodactyl; pause ;;
       7) install_pyrodactyl; install_wings; pause ;;
       8) install_pyrodactyl; install_elytra; pause ;;
-      9) show_setup_guides; pause ;;
-      0) success "Bye."; exit 0 ;;
-      *) warn "Invalid choice, try again."; pause ;;
+      9) run_diagnostics; pause ;;
+      0) success "Bye!"; exit 0 ;;
+      *) warn "Invalid choice."; pause ;;
     esac
   done
 }
