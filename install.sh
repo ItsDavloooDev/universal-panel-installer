@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SCRIPT_VERSION="2.1.0"
+SCRIPT_VERSION="2.2.0"
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="${BASE_DIR}/logs"
 mkdir -p "$LOG_DIR"
@@ -21,6 +21,7 @@ BOLD='\033[1m'
 
 PANEL_INSTALLER_URL="https://raw.githubusercontent.com/pterodactyl-installer/pterodactyl-installer/master/install.sh"
 REVIACTYL_INSTALLER_URL="https://raw.githubusercontent.com/reviactyl/reviactyl/main/install.sh"
+BLUEPRINT_INSTALLER_URL="https://get.blueprint.zip"
 PYRODACTYL_REPO_URL="https://github.com/pyrohost/pyrodactyl"
 ELYTRA_REPO_URL="https://github.com/pyrohost/elytra"
 DOCKER_SCRIPT_URL="https://get.docker.com"
@@ -480,6 +481,48 @@ install_wings() {
   fi
 }
 
+install_blueprint() {
+  step "Blueprint — Extension Framework for Pterodactyl"
+  echo
+  echo -e "  ${CYAN}Blueprint${NC} is an extension framework that only works on a ${BOLD}native${NC} Pterodactyl panel."
+  echo -e "  It is ${RED}not compatible${NC} with the Dockerized panel, Reviactyl or Pyrodactyl."
+  echo
+
+  local mode; mode="$(state_get install_mode)"
+  if [[ "$mode" == "docker" ]]; then
+    error "Your panel was installed in Docker mode — Blueprint is NOT supported in this configuration."
+    echo -e "  ${YELLOW}Blueprint requires direct filesystem access to /var/www/pterodactyl and PHP.${NC}"
+    echo -e "  Install a native panel first if you want to use Blueprint."
+    return 1
+  fi
+
+  if [[ "$mode" != "native" ]]; then
+    warn "No panel install mode detected in state. Blueprint requires a native Pterodactyl panel."
+    if ! ask_yes_no "Continue anyway? (only if you have a native panel already installed)" "n"; then
+      return 0
+    fi
+  fi
+
+  local panel_dir
+  panel_dir="$(ask_input 'Pterodactyl panel directory' '/var/www/pterodactyl')"
+
+  if [[ ! -d "$panel_dir" ]]; then
+    error "Directory $panel_dir does not exist."
+    echo -e "  ${YELLOW}Make sure Pterodactyl is installed at that path before running Blueprint.${NC}"
+    return 1
+  fi
+
+  info "Downloading and running the official Blueprint installer from blueprint.zip..."
+  cd "$panel_dir"
+  bash <(curl -sSL "$BLUEPRINT_INSTALLER_URL")
+
+  state_set "blueprint" "installed"
+  state_set "blueprint_dir" "$panel_dir"
+  success "Blueprint installation finished."
+  echo
+  info "You can now install Blueprint extensions (.blueprint files) from the panel admin area."
+}
+
 install_reviactyl() {
   info "Starting Reviactyl installer..."
   warn "Have your panel URL and API key ready."
@@ -661,6 +704,29 @@ diag_wings_docker() {
   fi
 }
 
+diag_blueprint() {
+  echo -e "  ${BOLD}Blueprint${NC}"
+  local dir; dir="$(state_get blueprint_dir)"
+  if [[ -z "$dir" ]]; then
+    check_warn "No Blueprint path tracked — skipping"
+    return
+  fi
+  check_ok "Blueprint installed in: $dir"
+  if [[ -f "$dir/blueprint.sh" ]]; then
+    check_ok "blueprint.sh found"
+    local ver
+    ver="$(bash "$dir/blueprint.sh" --version 2>/dev/null || echo 'unknown')"
+    check_ok "Blueprint version: $ver"
+  else
+    check_warn "blueprint.sh not found at $dir — Blueprint may not be fully installed"
+  fi
+  if [[ -d "$dir/extensions" ]]; then
+    local ext_count
+    ext_count="$(find "$dir/extensions" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)"
+    check_ok "Extensions installed: $ext_count"
+  fi
+}
+
 diag_reviactyl() {
   echo -e "  ${BOLD}Reviactyl${NC}"
   if [[ "$(state_get reviactyl)" == "installed" ]]; then
@@ -807,16 +873,18 @@ run_diagnostics() {
   local has_reviactyl; has_reviactyl="$(state_get reviactyl)"
   local has_pyrodactyl; has_pyrodactyl="$(state_get pyrodactyl)"
   local has_elytra; has_elytra="$(state_get elytra)"
+  local has_blueprint; has_blueprint="$(state_get blueprint)"
 
   echo -e "  ${BOLD}Installed components (tracked by this script):${NC}"
   [[ "$has_native" == "installed" ]]     && echo -e "    ${GREEN}+${NC} Pterodactyl panel (native)"
   [[ "$has_docker" == "installed" ]]     && echo -e "    ${GREEN}+${NC} Pterodactyl panel (Docker)"
   [[ "$has_wings" == "installed" ]]      && echo -e "    ${GREEN}+${NC} Wings (${wings_mode:-unknown} mode)"
+  [[ "$has_blueprint" == "installed" ]]  && echo -e "    ${GREEN}+${NC} Blueprint"
   [[ "$has_reviactyl" == "installed" ]]  && echo -e "    ${GREEN}+${NC} Reviactyl"
   [[ "$has_pyrodactyl" == "installed" ]] && echo -e "    ${GREEN}+${NC} Pyrodactyl"
   [[ "$has_elytra" == "installed" ]]     && echo -e "    ${GREEN}+${NC} Elytra"
 
-  if [[ -z "$has_native$has_docker$has_wings$has_reviactyl$has_pyrodactyl$has_elytra" ]]; then
+  if [[ -z "$has_native$has_docker$has_wings$has_blueprint$has_reviactyl$has_pyrodactyl$has_elytra" ]]; then
     check_warn "Nothing has been installed via this script yet."
   fi
   echo
@@ -832,6 +900,7 @@ run_diagnostics() {
     fi
   fi
 
+  [[ "$has_blueprint" == "installed" ]]  && diag_blueprint && echo
   [[ "$has_reviactyl" == "installed" ]]  && diag_reviactyl && echo
   [[ "$has_pyrodactyl" == "installed" ]] && diag_pyrodactyl && echo
   [[ "$has_elytra" == "installed" ]]     && diag_elytra && echo
@@ -870,6 +939,7 @@ main_menu() {
     echo "    6) Pyrodactyl"
     echo "    7) Pyrodactyl + Wings"
     echo "    8) Pyrodactyl + Elytra"
+    echo "   10) Blueprint  ${YELLOW}(native panel only)${NC}"
     echo
     echo -e "    ${CYAN}9) System diagnostics & health check${NC}"
     echo "    0) Exit"
@@ -877,17 +947,18 @@ main_menu() {
     read -r -p "  Your choice: " choice
     echo
     case "$choice" in
-      1) choose_panel_mode; pause ;;
-      2) install_wings; pause ;;
-      3) choose_panel_mode; install_wings; pause ;;
-      4) install_reviactyl; pause ;;
-      5) install_reviactyl; install_wings; pause ;;
-      6) install_pyrodactyl; pause ;;
-      7) install_pyrodactyl; install_wings; pause ;;
-      8) install_pyrodactyl; install_elytra; pause ;;
-      9) run_diagnostics; pause ;;
-      0) success "Bye!"; exit 0 ;;
-      *) warn "Invalid choice."; pause ;;
+      1)  choose_panel_mode; pause ;;
+      2)  install_wings; pause ;;
+      3)  choose_panel_mode; install_wings; pause ;;
+      4)  install_reviactyl; pause ;;
+      5)  install_reviactyl; install_wings; pause ;;
+      6)  install_pyrodactyl; pause ;;
+      7)  install_pyrodactyl; install_wings; pause ;;
+      8)  install_pyrodactyl; install_elytra; pause ;;
+      9)  run_diagnostics; pause ;;
+      10) install_blueprint; pause ;;
+      0)  success "Bye!"; exit 0 ;;
+      *)  warn "Invalid choice."; pause ;;
     esac
   done
 }
