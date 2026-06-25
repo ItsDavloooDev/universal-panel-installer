@@ -31,7 +31,8 @@ sudo bash <(curl -s https://raw.githubusercontent.com/ItsDavloooDev/universal-pa
 - Prepare **Pyrodactyl** by cloning its repository.
 - Prepare **Pyrodactyl + Wings**.
 - Prepare **Pyrodactyl + Elytra**.
-- Built-in post-install checklist so you never miss a step.
+- Install **[Blueprint](https://blueprint.zip/)** extension framework on a native Pterodactyl panel.
+- Built-in system diagnostics & health check with auto-fix for common issues.
 - Execution log saved automatically in `logs/`.
 
 ## Supported systems
@@ -46,16 +47,18 @@ Other distributions may work but are not officially targeted.
 Once the script starts you will see this menu:
 
 ```
-  1) Pterodactyl panel
-  2) Wings
-  3) Pterodactyl panel + Wings
-  4) Reviactyl
-  5) Reviactyl + Wings
-  6) Pyrodactyl
-  7) Pyrodactyl + Wings
-  8) Pyrodactyl + Elytra
-  9) Post-install checklist
-  0) Exit
+   1) Pterodactyl panel
+   2) Wings
+   3) Pterodactyl panel + Wings
+   4) Reviactyl
+   5) Reviactyl + Wings
+   6) Pyrodactyl
+   7) Pyrodactyl + Wings
+   8) Pyrodactyl + Elytra
+  10) Blueprint  (native panel only)
+
+   9) System diagnostics & health check
+   0) Exit
 ```
 
 ### Panel installation mode
@@ -144,6 +147,34 @@ After cloning:
 3. Start the application using the upstream instructions.
 4. Test login, API responses and dashboard rendering.
 
+### Blueprint
+
+> **Requires a native Pterodactyl panel.**
+> Blueprint is **not compatible** with the Dockerized panel, Reviactyl or Pyrodactyl.
+
+[Blueprint](https://blueprint.zip/) is an extension framework for Pterodactyl that lets you install `.blueprint` extension packages directly from the admin area without touching the codebase manually.
+
+Prepare before running:
+
+- A working native Pterodactyl panel already installed (option `1` or `3` of this script, native mode).
+- The panel directory on disk (default: `/var/www/pterodactyl`).
+- Root access to the server.
+
+The installer will:
+
+1. Verify that the panel directory exists.
+2. Download and run the official Blueprint installer from [get.blueprint.zip](https://get.blueprint.zip).
+3. Track the installation path in the internal state file.
+
+After the installation:
+
+1. Log into your panel as an administrator.
+2. Navigate to **Admin → Blueprint**.
+3. Upload a `.blueprint` extension file to install it.
+4. Extensions are applied automatically — no manual file editing required.
+
+To check the installed Blueprint version and extension count at any time, run option `9` (System diagnostics) from the main menu.
+
 ## Dockerized panel — extra steps
 
 When you choose the dockerized mode the script generates:
@@ -165,12 +196,26 @@ Before starting the stack:
 4. Configure mail environment variables.
 5. Start with: `docker compose up -d`
 
+## System diagnostics
+
+Option `9` runs a full health check on everything this script has installed:
+
+- System resources (RAM, disk space)
+- Docker daemon and Compose availability
+- Panel service status (native or Docker containers)
+- Wings service or container status and config validity
+- Blueprint version and extension count
+- Reviactyl, Pyrodactyl and Elytra repository and env status
+
+If problems are detected, the script offers to auto-fix common issues (start stopped containers, restart services, etc.).
+
 ## Important notes
 
 - The script delegates to upstream installers and repositories whenever possible.
 - Always replace placeholder credentials before production use.
 - Always put public services behind HTTPS.
 - Test every component before moving live traffic.
+- Blueprint only works on a **native** Pterodactyl panel — do not attempt to use it on a Dockerized panel.
 
 ## Upstream projects
 
@@ -179,6 +224,7 @@ Before starting the stack:
 | Pterodactyl Installer | https://github.com/pterodactyl-installer/pterodactyl-installer |
 | Reviactyl | https://reviactyl.app/ |
 | Pyrodactyl | https://pyrodactyl.dev/ |
+| Blueprint | https://blueprint.zip/ |
 | Wings documentation | https://pterodactyl.io/wings/1.0/installing.html |
 
 ## License
